@@ -55,7 +55,7 @@ Usage: hdns - <command|value>
 ```
 
 ### show_zones
-Show all zones
+Show all zones.
 
 #### Example
 ```
@@ -82,7 +82,7 @@ hdns create_zone example.org
 ```
 
 ### update_zone
-Update zone parameters
+Update zone parameters.
 
 #### Example
 ```
@@ -96,7 +96,7 @@ hdns update_zone example.org 600
 ```
 
 ### delete_zone
-Delete complete zone
+Delete complete zone.
 
 Per default the program asks you if you really want to delete the zone. The complete zone and records will be deleted. If you want to force this you can use the parameter --force True
 
@@ -142,37 +142,103 @@ hdns export_zone example.org [--file example_org.zone]
 ```
 
 ### validate_zonefile
-Validate zone file
+Validate zone file.
+
+#### Example
+```
+Usage: hdns validate_zonefile FILE
+
+hdns hdns validate_zonefile --file test.zone
+
+or
+
+hdns validate_zonefile test.zone
+```
 
 ### create_record
 Create new record in zone.
 
 #### Example
 ```
-hdns create_record --zone thoma-lab.de --name www --type A --value 1.1.1.1
+hdns create_record --zone example.org --name www --type A --value 1.1.1.1
 
 or
 
-hdns create_record thoma-lab.de www A 1.1.1.1
+hdns create_record example.org www A 1.1.1.1
 ```
 
 ### show_records
-Shows records of given zone eg. hdns_cli show_records --zone example.org
+Shows records of given zone.
+
+#### Example
+```
+Usage: hdns show_records ZONE <flags>
+  optional flags:        --id
+  
+hdns show_records --zone example.org
+
+or 
+
+hdns show_records example.org
+```
 
 ### update_record
-Update exsisting record, record_id required
+Update exsisting record, unique record or record_id required.
+
+#### Example 
+```
+Usage: hdns update_record ZONE NAME TYPE VALUE <flags>
+  optional flags:        --name_new | --value_new | --record_id
+
+hdns update_record --zone example.org --name www --type A --value 1.1.1.1 --value_new 1.0.0.1
+
+or 
+
+hdns update_record example.org www A 1.1.1.1 --value_new 1.0.0.1
+```
 
 ### delete_record
 Delete record if record is unique.
 
+##### Example 
+```
+Usage: hdns delete_record ZONE NAME TYPE VALUE
+
+hdns delete_record --zone example.org --name www --type A --value 1.1.1.1
+
+or 
+
+hdns delete_record example.org www A 1.1.1.1
+```
+
 ### delete_records
-Delete records which are identical.
+Delete records which are identical. For example you have several identical records by error.
+
+#### Example 
+```
+Usage: hdns delete_records ZONE NAME TYPE VALUE
+
+hdns delete_records --zone example.org --name www --type A --value 1.1.1.1
+
+or 
+
+hdns delete_records example.org www A 1.1.1.1
+```
 
 
 ### delete_record_by_id
-Delete record with record_id if record is not unique
+Delete record with record_id if record is not unique.
 
+####Example
+```
+Usage: hdns delete_record_by_id RECORD_ID
 
+hdns delete_record_by_id --record_id xxxxxxxxxxxxxxxxxxxxx
+
+or
+
+hdns delete_record_by_id xxxxxxxxxxxxxxxxxxxxx
+```
 ### bulk_create_records
 Creates bulk records for zone the records file must be presented in YAML style.
 
@@ -201,19 +267,74 @@ hdns bulk_create_records records.yaml
 ```
 
 ### show_primary_servers
-Shows all primary servers configured
+Shows all primary servers configured.
 
+#### Example
+```
+hdns show_primary_servers
+
+Zone           IP              Port
+-------------  ------------  ------
+example.org    1.1.1.1       53
+example.net    1.0.0.1       5353
+```
 ### create_primary_server
 Create primary server requires empty zone. This zone is after primary server is created a secondary zone.
+You can only define a primary server if the zone is emtpy.
+
+#### Example
+```
+Usage: hdns create_primary_server ZONE ADDRESS <flags>
+  optional flags:        --port
+
+hdns create_primary_server --zone example.org --address 1.1.1.1 [--port 53]  
+
+or
+
+hdns create_primary_server example.org 1.1.1.1 [--port 53]
+```
 
 ### update_primary_server
-Update primary server
+Update primary server.
+
+#### Example
+```
+Usage: hdns update_primary_server ZONE ADDRESS <flags>
+  optional flags:        --port | --address_new | --port_new
+
+hdns update_primary_server --zone example.org --address 1.1.1.1 --address_new 1.0.0.1
+
+or 
+
+hdns update_primary_server example.org 1.1.1.1 --address_new 1.0.0.1
+```
 
 ### delete_primary_server
-Delete an primary server
+Delete a primary server. Default port 53 is set, parameter only needed if not default port.
 
+#### Example
+```
+Usage: hdns delete_primary_server ZONE ADDRESS <flags>
+  optional flags:        --port
+  
+hdns delete_primary_server --zone example.org --address 1.1.1.1 [--port 5353]
+
+or
+
+hdns delete_primary_server example.org 1.1.1.1 [--port 5353]
+```
 ### show_system
-Shows the current used system
+Shows the current used system.
 
+#### Example
+```
+hdns show_system
+dns.hetzner.com
+```
 ### show_token
-Shows the current used token
+Shows the current used token.
+#### Example
+```
+hdns show_token
+xxxxxxxxxxxxxxxxxxxxxxx
+```
