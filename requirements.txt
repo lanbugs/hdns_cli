@@ -1,0 +1,11 @@
+certifi==2021.5.30
+charset-normalizer==2.0.4
+fire==0.4.0
+idna==3.2
+loguru==0.5.3
+PyYAML==5.4.1
+requests==2.26.0
+six==1.16.0
+tabulate==0.8.9
+termcolor==1.1.0
+urllib3==1.26.6
