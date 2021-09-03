@@ -206,7 +206,7 @@ class Hdns_cli(object):
     # Everything regarding zones
 
     def show_zones(self):
-        """ Show all zones eg. hdns_cli show_zones """
+        """ Show all zones eg. hdns show_zones """
         try:
             response = requests.get(
                 url=f"https://{self.SYSTEM}/api/v1/zones",
@@ -238,7 +238,7 @@ class Hdns_cli(object):
 
     def create_zone(self, zone, ttl=86400):
         """
-        Create new Zone eg. hdns_cli create_zone --zone example.org
+        Create new Zone eg. hdns create_zone --zone example.org
         :param zone: Name of the zone, eg. example.org
         :param ttl: Time to live, default: 86400
         """
@@ -345,7 +345,7 @@ class Hdns_cli(object):
 
     def show_records(self, zone, id=False):
         """
-        Shows records of given zone eg. hdns_cli show_records --zone example.org
+        Shows records of given zone eg. hdns show_records --zone example.org
         :param zone: Name of the zone, eg. example.org
         :param id: Show record ids if True
         """
