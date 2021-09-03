@@ -1,36 +1,27 @@
 # hdns - Hetzner DNS CLI Tool
 
-´´
-NAME
-    hdns - HDNS - CLI tool to administer Hetzner DNS via API - Version 1.0
+## Description
+Hetzner provides an DNS service completely manageable via API,
+this tool gives you easy access to the functions.
 
-SYNOPSIS
-    hdns - COMMAND | VALUE
+To use define --system dns.hetzner.com --token <your_api_key> or simply store
+it in an config ini file.
 
-DESCRIPTION
-    Hetzner provides an DNS service completely manageable via API,
-    this tool gives you easy access to the functions.
+You have the following options:
+ - ~/.hdns/hdns.ini
+ - /etc/hdns/hdns.ini
+ - ./hdns.ini
 
-    To use define --system dns.hetzner.com --token <your_api_key> or simply store
-    it in an config ini file.
+Content:
+[general]
+system=dns.hetzner.com
+token=<your_token>
 
-    You have the following options:
-    - ~/.hdns/hdns.ini
-    - /etc/hdns/hdns.ini
-    - ./hdns.ini
+---
+Written by Maximilian Thoma 2021, released under GNU General Public License v3.0
+More on https://lanbugs.de or https://github.com/lanbugs/hdns_cli
 
-    Content:
-    [general]
-    system=dns.hetzner.com
-    token=<your_token>
-
-    ---
-    Written by Maximilian Thoma 2021, released under GNU General Public License v3.0
-    More on https://lanbugs.de or https://github.com/lanbugs/hdns_cli
-
-COMMANDS
-    COMMAND is one of the following:
-
+## Commands
      bulk_create_records
        Creates bulk records for zone
 
@@ -90,14 +81,4 @@ COMMANDS
 
      validate_zonefile
        Validate zone file
-
-VALUES
-    VALUE is one of the following:
-
-     API_TOKEN
-
-     SYSTEM
-´´
-
-
 
