@@ -4,6 +4,10 @@
 Hetzner provides an DNS service completely manageable via API,
 this tool gives you easy access via CLI to the functions.
 
+More informations about the API https://dns.hetzner.com/api-docs
+
+More informations about the DNS service from Hetzner https://www.hetzner.com/de/dns-console
+
 ---
 Written by Maximilian Thoma 2021, released under GNU General Public License v3.0
 
