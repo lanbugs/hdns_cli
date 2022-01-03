@@ -240,7 +240,7 @@ class Hdns_cli(object):
         """
         Create new Zone eg. hdns create_zone --zone example.org
         :param zone: Name of the zone, eg. example.org
-        :param ttl: Time to live, default: 86400
+        :param ttl: Time to live
         """
         try:
             response = requests.post(
@@ -386,14 +386,14 @@ class Hdns_cli(object):
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
-    def create_record(self, zone, name, type, value, ttl=0):
+    def create_record(self, zone, name, type, value, ttl=3600):
         """
         Create new record in zone
         :param zone: Name of the zone, eg. example.org
         :param name: Name of the record, eg. www
         :param type: Type of record eg. A, valid are A, AAAA, NS, MX, CNAME, RP, TXT, SOA, HINFO, SRV, DANE, TLSA, DS, CAA
         :param value: Value of the record eg. 1.1.1.1
-        :param ttl: Time to live default 0
+        :param ttl: Time to live
         """
         try:
             zone_id = self._get_zone_id(zone)
@@ -443,7 +443,7 @@ class Hdns_cli(object):
         except Exception as e:\
             logger.exception(e)
 
-    def update_record(self, zone, name, type, value, name_new=None, value_new=None, record_id=None):
+    def update_record(self, zone, name, type, value, name_new=None, value_new=None, record_id=None, ttl=3600):
         """
         Update exsisting record, record_id required
         :param zone: Name of the zone, eg. example.org
@@ -453,6 +453,7 @@ class Hdns_cli(object):
         :param name_new: New name of the record, eg. www
         :param value_new: New value of the record eg. 1.1.1.1
         :param record_id: Record ID if record is not unique. Get record_id with show_records --zone example.org --id True
+        :param ttl: Time to live
         """
         try:
             zone_id = self._get_zone_id(zone)
@@ -474,7 +475,7 @@ class Hdns_cli(object):
                 },
                 data=json.dumps({
                     "value": value_new,
-                    "ttl": 0,
+                    "ttl": ttl,
                     "type": type,
                     "name": name_new,
                     "zone_id": zone_id
