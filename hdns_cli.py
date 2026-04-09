@@ -89,6 +89,26 @@ class Hdns_cli(object):
         """ Shows the current used system """
         print(self.SYSTEM)
 
+    def _get_all_records(self, zone_id):
+        """ PRIVATE: Fetch all records of a zone, handling pagination """
+        records = []
+        page = 1
+        while True:
+            response = requests.get(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                params={"page": page, "per_page": 100},
+                headers=self._auth_header(),
+            )
+            content = json.loads(response.content)
+            if response.status_code != 200:
+                raise RuntimeError(content.get('error', {}).get('message', str(content)))
+            records.extend(content['records'])
+            pagination = content.get('meta', {}).get('pagination', {})
+            if page >= pagination.get('last_page', 1):
+                break
+            page += 1
+        return records
+
     def _get_zone_id(self, zone_name):
         """ PRIVATE: Get the zone id to work with names in records add, mod, remove """
         try:
@@ -115,64 +135,21 @@ class Hdns_cli(object):
         """ PRIVATE: Get the record id if record is unique """
         try:
             zone_id = self._get_zone_id(zone)
-
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                headers=self._auth_header(),
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
-
-            if status_code == 200:
-                records = content['records']
-                matches = 0
-                result = 0
-
-                for rr in records:
-                    if rr['name'] == name and rr['type'] == type and rr['value'] == value:
-                        result = rr['id']
-                        matches += 1
-
-                if matches == 1:
-                    return result
-                else:
-                    return False
-
-            else:
-                print("Error occured")
-                print(content)
-
-        except requests.exceptions.RequestException as e:
+            records = self._get_all_records(zone_id)
+            matches = [rr['id'] for rr in records
+                       if rr['name'] == name and rr['type'] == type and rr['value'] == value]
+            return matches[0] if len(matches) == 1 else False
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     def _get_all_record_ids(self, zone, name, type, value):
         """ PRIVATE: Get the record ids for all identical records """
         try:
             zone_id = self._get_zone_id(zone)
-
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                headers=self._auth_header(),
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
-
-            if status_code == 200:
-                records = content['records']
-                result = []
-
-                for rr in records:
-                    if rr['name'] == name and rr['type'] == type and rr['value'] == value:
-                        result.append(rr['id'])
-                return result
-
-            else:
-                print("Error occured")
-                print(content)
-
-        except requests.exceptions.RequestException as e:
+            records = self._get_all_records(zone_id)
+            return [rr['id'] for rr in records
+                    if rr['name'] == name and rr['type'] == type and rr['value'] == value]
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     ####################################################################################################################
@@ -326,17 +303,10 @@ class Hdns_cli(object):
         zone_id = self._get_zone_id(zone)
 
         try:
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                headers=self._auth_header()
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
+            records = self._get_all_records(zone_id)
 
             print(f"*** Records @ {zone} " + "*" * 80)
-            if status_code == 200:
-                records = content['records']
+            if records is not None:
 
                 # Build beautiful list
                 if id is False:
@@ -397,7 +367,7 @@ class Hdns_cli(object):
 
             else:
                 print(f"Given type {type} is not supported.")
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     def set_zone_ttl(self, zone, ttl=0):
@@ -410,20 +380,7 @@ class Hdns_cli(object):
         """
         try:
             zone_id = self._get_zone_id(zone)
-
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                headers=self._auth_header()
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
-
-            if status_code != 200:
-                print(content.get('error', {}).get('message', str(content)))
-                return
-
-            records = content['records']
+            records = self._get_all_records(zone_id)
             updated = 0
             failed = 0
 
@@ -451,7 +408,7 @@ class Hdns_cli(object):
             print(f"TTL set to {ttl_label} for {updated} records in {zone}" +
                   (f", {failed} failed." if failed else "."))
 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     def replace_ip(self, zone, old_ip, new_ip):
@@ -464,20 +421,8 @@ class Hdns_cli(object):
         """
         try:
             zone_id = self._get_zone_id(zone)
-
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                headers=self._auth_header()
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
-
-            if status_code != 200:
-                print(content.get('error', {}).get('message', str(content)))
-                return
-
-            matches = [rr for rr in content['records']
+            all_records = self._get_all_records(zone_id)
+            matches = [rr for rr in all_records
                        if rr['type'] in ('A', 'AAAA') and rr['value'] == old_ip]
 
             if not matches:
