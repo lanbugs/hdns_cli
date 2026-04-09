@@ -6,7 +6,7 @@ setup(
     author="Maximilian Thoma",
     author_email="dev@lanbugs.de",
     url="https://github.com/lanbugs/hdns_cli/",
-    version="1.0.0",
+    version="2.0.0",
     scripts=["hdns_cli.py"],
     install_requires=['loguru', 'fire', 'tabulate', 'requests', 'pyyaml'],
     license="GNU General Public License v3.0",
