@@ -400,6 +400,60 @@ class Hdns_cli(object):
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
+    def set_zone_ttl(self, zone, ttl=0):
+        """
+        Set TTL for all records in a zone at once.
+        Use ttl=0 to reset to Hetzner global TTL (zone default).
+        Useful before IP changes (set low TTL) or to revert afterwards.
+        :param zone: Name of the zone, eg. example.org
+        :param ttl: TTL value in seconds, 0 = use zone default (Hetzner global TTL)
+        """
+        try:
+            zone_id = self._get_zone_id(zone)
+
+            response = requests.get(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                headers=self._auth_header()
+            )
+
+            status_code = response.status_code
+            content = json.loads(response.content)
+
+            if status_code != 200:
+                print(content.get('error', {}).get('message', str(content)))
+                return
+
+            records = content['records']
+            updated = 0
+            failed = 0
+
+            for rr in records:
+                r = requests.put(
+                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{rr['id']}",
+                    headers={
+                        "Content-Type": "application/json",
+                        **self._auth_header(),
+                    },
+                    data=json.dumps({
+                        "name": rr['name'],
+                        "type": rr['type'],
+                        "value": rr['value'],
+                        "ttl": ttl,
+                    })
+                )
+                if r.status_code == 200:
+                    updated += 1
+                else:
+                    failed += 1
+                    print(f"Failed to update {rr['name']} {rr['type']}: {r.content}")
+
+            ttl_label = f"{ttl}s" if ttl > 0 else "zone default"
+            print(f"TTL set to {ttl_label} for {updated} records in {zone}" +
+                  (f", {failed} failed." if failed else "."))
+
+        except requests.exceptions.RequestException as e:
+            logger.exception(e)
+
     def bulk_create_records(self, yaml_file):
         """
         Creates bulk records for zone
