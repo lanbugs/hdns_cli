@@ -134,11 +134,20 @@ class Hdns_cli(object):
         return None
 
     def _put_rrset(self, zone_id, name, type, records, ttl=0):
-        """ PRIVATE: Create or fully replace an RRset """
+        """ PRIVATE: Replace an existing RRset (must already exist) """
         response = requests.put(
             url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets/{name}/{type}",
             headers={"Content-Type": "application/json", **self._auth_header()},
             data=json.dumps({"ttl": ttl, "records": records}),
+        )
+        return response
+
+    def _post_rrset(self, zone_id, name, type, records, ttl=0):
+        """ PRIVATE: Create a new RRset """
+        response = requests.post(
+            url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets",
+            headers={"Content-Type": "application/json", **self._auth_header()},
+            data=json.dumps({"name": name, "type": type, "ttl": ttl, "records": records}),
         )
         return response
 
@@ -365,21 +374,21 @@ class Hdns_cli(object):
                 print(f"Given type {type} is not supported.")
                 return
 
-            # Merge with existing RRset values if one already exists
             rrset = self._get_rrset(zone_id, name, type)
             if rrset:
+                # RRset exists: add value to it via PUT
                 existing_values = [r['value'] for r in rrset.get('records', [])]
                 if value in existing_values:
                     print(f"Record {name} {type} {value} already exists.")
                     return
-                new_records = existing_values + [value]
-                ttl = rrset.get('ttl', ttl)
+                response = self._put_rrset(zone_id, name, type,
+                                           [{"value": v} for v in existing_values + [value]],
+                                           rrset.get('ttl', ttl))
             else:
-                new_records = [value]
+                # RRset does not exist: create via POST
+                response = self._post_rrset(zone_id, name, type, [{"value": value}], ttl)
 
-            response = self._put_rrset(zone_id, name, type,
-                                       [{"value": v} for v in new_records], ttl)
-            if response.status_code == 200:
+            if response.status_code in (200, 201):
                 print("record successful created.")
             else:
                 print(json.loads(response.content).get('error', {}).get('message', str(response.content)))
