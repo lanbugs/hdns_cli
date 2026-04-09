@@ -40,17 +40,18 @@ else:
 ########################################################################################################################
 # CONSTANTS
 ########################################################################################################################
-VALID_TYPES = ['A', 'AAAA', 'NS', 'MX', 'CNAME', 'RP', 'TXT', 'SOA', 'HINFO', 'SRV', 'DANE', 'TLSA', 'DS', 'CAA']
+VALID_TYPES = ['A', 'AAAA', 'NS', 'MX', 'CNAME', 'RP', 'TXT', 'SOA', 'HINFO', 'SRV', 'DANE', 'TLSA', 'DS', 'CAA',
+               'HTTPS', 'SVCB', 'PTR']
 
 ########################################################################################################################
 # HDNS CLI
 ########################################################################################################################
 class Hdns_cli(object):
-    """HDNS - CLI tool to administer Hetzner DNS via API - Version 1.0.0\n
+    """HDNS - CLI tool to administer Hetzner DNS via API - Version 2.0.0\n
     Hetzner provides an DNS service completely manageable via API,
     this tool gives you easy access to the functions.
 
-    To use define --system dns.hetzner.com --token <your_api_key> or simply store
+    To use define --system api.hetzner.cloud --token <your_api_key> or simply store
     it in an config ini file.
 
     You have the following options:
@@ -60,19 +61,25 @@ class Hdns_cli(object):
 
     Content:
     [general]
-    system=dns.hetzner.com
+    system=api.hetzner.cloud
     token=<your_token>
+
+    Note: API tokens must be created in the Hetzner Cloud Console,
+    not the old DNS Console. Old tokens are not compatible.
 
     ---
     Written by Maximilian Thoma 2021, released under GNU General Public License v3.0
     More on https://lanbugs.de or https://github.com/lanbugs/hdns_cli
     :param token: Token for authentication
-    :param system: FQDN of the DNS System used, eg. dns.hetzner.com
+    :param system: FQDN of the DNS System used, eg. api.hetzner.cloud
     """
 
     def __init__(self, token=TOKEN, system=SYSTEM):
         self.API_TOKEN = token
         self.SYSTEM = system
+
+    def _auth_header(self):
+        return {"Authorization": f"Bearer {self.API_TOKEN}"}
 
     def show_token(self):
         """ Shows the current used token """
@@ -86,8 +93,9 @@ class Hdns_cli(object):
         """ PRIVATE: Get the zone id to work with names in records add, mod, remove """
         try:
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/zones",
-                headers={"Auth-API-Token": self.API_TOKEN}
+                url=f"https://{self.SYSTEM}/v1/zones",
+                params={"name": zone_name},
+                headers=self._auth_header()
             )
 
             status_code = response.status_code
@@ -108,15 +116,9 @@ class Hdns_cli(object):
         try:
             zone_id = self._get_zone_id(zone)
 
-            # get all records of domain
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/records",
-                params={
-                    "zone_id": zone_id,
-                },
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                },
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                headers=self._auth_header(),
             )
 
             status_code = response.status_code
@@ -149,15 +151,9 @@ class Hdns_cli(object):
         try:
             zone_id = self._get_zone_id(zone)
 
-            # get all records of domain
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/records",
-                params={
-                    "zone_id": zone_id,
-                },
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                },
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                headers=self._auth_header(),
             )
 
             status_code = response.status_code
@@ -179,29 +175,6 @@ class Hdns_cli(object):
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
-    def _get_primary_server_id(self, zone, address, port=53):
-        try:
-            zone_id = self._get_zone_id(zone)
-
-            response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/primary_servers",
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                },
-            )
-
-            status_code = response.status_code
-            content = json.loads(response.content)
-
-            if status_code == 200:
-                for ps in content['primary_servers']:
-                    if ps['zone_id'] == zone_id and ps['address'] == address and ps['port'] == port:
-                        return ps['id']
-            else:
-                return False
-
-        except requests.exceptions.RequestException as e:
-            logger.exception(e)
     ####################################################################################################################
     # Everything regarding zones
 
@@ -209,26 +182,29 @@ class Hdns_cli(object):
         """ Show all zones eg. hdns show_zones """
         try:
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/zones",
-                headers={"Auth-API-Token": self.API_TOKEN}
+                url=f"https://{self.SYSTEM}/v1/zones",
+                headers=self._auth_header()
             )
 
             status_code = response.status_code
             content = json.loads(response.content)
 
             if status_code == 200:
-                result_header = ['ID', 'Zone', 'Secondary?', 'NS']
+                result_header = ['ID', 'Zone', 'Mode', 'NS']
                 results = []
 
                 for zone in content['zones']:
-                    results.append(
-                        [
-                            zone['id'],
-                            zone['name'],
-                            zone['is_secondary_dns'],
-                            ", ".join(zone['ns'])
-                        ]
-                    )
+                    # Support both old (is_secondary_dns) and new (mode) field names
+                    if 'mode' in zone:
+                        mode = zone['mode']
+                    else:
+                        mode = 'secondary' if zone.get('is_secondary_dns') else 'primary'
+
+                    # Support both old (ns) and new (authoritative_nameservers) field names
+                    ns_list = zone.get('ns', zone.get('authoritative_nameservers', []))
+                    ns = ", ".join(ns_list) if ns_list else ''
+
+                    results.append([zone['id'], zone['name'], mode, ns])
 
                 print(f"*** Zones @ {self.SYSTEM} " + "*"*80)
                 print(tabulate.tabulate(results, result_header))
@@ -244,24 +220,25 @@ class Hdns_cli(object):
         """
         try:
             response = requests.post(
-                url=f"https://{self.SYSTEM}/api/v1/zones",
+                url=f"https://{self.SYSTEM}/v1/zones",
                 headers={
                     "Content-Type": "application/json",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=json.dumps({
                     "name": zone,
-                    "ttl": ttl
+                    "ttl": ttl,
+                    "mode": "primary"
                 })
             )
 
             status_code = response.status_code
             content = json.loads(response.content)
 
-            if status_code == 200:
+            if status_code in (200, 201):
                 print(f"zone {zone} created.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -277,10 +254,10 @@ class Hdns_cli(object):
             zone_id = self._get_zone_id(zone)
 
             response = requests.put(
-                url=f"https://{self.SYSTEM}/api/v1/zones/{zone_id}",
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
                 headers={
                     "Content-Type": "application/json",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=json.dumps({
                     "name": zone,
@@ -294,7 +271,7 @@ class Hdns_cli(object):
             if status_code == 200:
                 print(f"zone {zone} updated.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -319,19 +296,16 @@ class Hdns_cli(object):
 
             if doit is True:
                 response = requests.delete(
-                    url=f"https://{self.SYSTEM}/api/v1/zones/{zone_id}",
-                    headers={
-                        "Auth-API-Token": self.API_TOKEN,
-                    },
+                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
+                    headers=self._auth_header(),
                 )
 
                 status_code = response.status_code
-                content = json.loads(response.content)
 
-                if status_code == 200:
+                if status_code in (200, 204):
                     print(f"zone {zone} deleted.")
                 else:
-                    pprint(content)
+                    pprint(json.loads(response.content))
 
             else:
                 print(f"Delete zone {zone} aborted ...")
@@ -353,8 +327,8 @@ class Hdns_cli(object):
 
         try:
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/records?zone_id={zone_id}",
-                headers={"Auth-API-Token": self.API_TOKEN}
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                headers=self._auth_header()
             )
 
             status_code = response.status_code
@@ -400,28 +374,26 @@ class Hdns_cli(object):
 
             if type in VALID_TYPES:
                 response = requests.post(
-                    url=f"https://{self.SYSTEM}/api/v1/records",
+                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
                     headers={
                         "Content-Type": "application/json",
-                        "Auth-API-Token": self.API_TOKEN,
+                        **self._auth_header(),
                     },
                     data=json.dumps({
                         "value": value,
                         "ttl": ttl,
                         "type": type,
                         "name": name,
-                        "zone_id": zone_id
                     })
                 )
 
                 status_code = response.status_code
                 content = json.loads(response.content)
 
-                if status_code == 200:
+                if status_code in (200, 201):
                     print("record successful created.")
                 else:
-                    print(content['error']['message'])
-
+                    print(content.get('error', {}).get('message', str(content)))
 
             else:
                 print(f"Given type {type} is not supported.")
@@ -440,7 +412,7 @@ class Hdns_cli(object):
             for rr in records['records']:
                 self.create_record(rr['zone'], rr['name'], rr['type'], rr['value'])
 
-        except Exception as e:\
+        except Exception as e:
             logger.exception(e)
 
     def update_record(self, zone, name, type, value, name_new=None, value_new=None, record_id=None):
@@ -467,17 +439,16 @@ class Hdns_cli(object):
                 value_new = value
 
             response = requests.put(
-                url=f"https://{self.SYSTEM}/api/v1/records/{record_id}",
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
                 headers={
                     "Content-Type": "application/json",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=json.dumps({
                     "value": value_new,
                     "ttl": 0,
                     "type": type,
                     "name": name_new,
-                    "zone_id": zone_id
                 })
             )
 
@@ -487,7 +458,7 @@ class Hdns_cli(object):
             if status_code == 200:
                 print("record successful updated.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -501,22 +472,20 @@ class Hdns_cli(object):
         :param value: Value of the record eg. 1.1.1.1
         """
         try:
+            zone_id = self._get_zone_id(zone)
             record_id = self._get_record_id(zone, name, type, value)
 
             response = requests.delete(
-                url=f"https://{self.SYSTEM}/api/v1/records/{record_id}",
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                },
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
+                headers=self._auth_header(),
             )
 
             status_code = response.status_code
-            content = json.loads(response.content)
 
-            if status_code == 200:
+            if status_code in (200, 204):
                 print("record successfully deleted.")
             else:
-                print(content)
+                print(json.loads(response.content))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -530,46 +499,44 @@ class Hdns_cli(object):
         :param value: Value of the record eg. 1.1.1.1
         """
         try:
-            record_id = self._get_all_record_ids(zone, name, type, value)
-            for r in record_id:
+            zone_id = self._get_zone_id(zone)
+            record_ids = self._get_all_record_ids(zone, name, type, value)
+            for r in record_ids:
                 response = requests.delete(
-                    url=f"https://{self.SYSTEM}/api/v1/records/{r}",
-                    headers={
-                        "Auth-API-Token": self.API_TOKEN,
-                    },
+                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{r}",
+                    headers=self._auth_header(),
                 )
 
                 status_code = response.status_code
-                content = json.loads(response.content)
 
-                if status_code == 200:
+                if status_code in (200, 204):
                     print("record successfully deleted.")
                 else:
-                    print(content)
+                    print(json.loads(response.content))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
-    def delete_record_by_id(self, record_id):
+    def delete_record_by_id(self, zone, record_id):
         """
         Delete record with record_id if record is not unique
+        :param zone: Name of the zone, eg. example.org
         :param record_id: Record ID you can get the record id via show_records
         """
         try:
+            zone_id = self._get_zone_id(zone)
+
             response = requests.delete(
-                url=f"https://{self.SYSTEM}/api/v1/records/{record_id}",
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                },
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
+                headers=self._auth_header(),
             )
 
             status_code = response.status_code
-            content = json.loads(response.content)
 
-            if status_code == 200:
+            if status_code in (200, 204):
                 print("record successfully deleted.")
             else:
-                print(content)
+                print(json.loads(response.content))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -590,10 +557,10 @@ class Hdns_cli(object):
                 content = f.read()
 
             response = requests.post(
-                url=f"https://{self.SYSTEM}/api/v1/zones/{zone_id}/import",
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/actions/import_zonefile",
                 headers={
                     "Content-Type": "text/plain",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=content
             )
@@ -601,10 +568,10 @@ class Hdns_cli(object):
             status_code = response.status_code
             content = json.loads(response.content)
 
-            if status_code == 200:
+            if status_code in (200, 201):
                 print(f"zone file successfully imported in zone {zone}.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -619,13 +586,8 @@ class Hdns_cli(object):
             zone_id = self._get_zone_id(zone)
 
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/zones/{zone_id}/export",
-                headers={
-                    "Auth-API-Token": self.API_TOKEN,
-                    "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-                },
-                data={
-                },
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/zonefile",
+                headers=self._auth_header(),
             )
 
             status_code = response.status_code
@@ -655,10 +617,10 @@ class Hdns_cli(object):
                 data = f.read()
 
             response = requests.post(
-                url=f"https://{self.SYSTEM}/api/v1/zones/file/validate",
+                url=f"https://{self.SYSTEM}/v1/zones/file/validate",
                 headers={
                     "Content-Type": "text/plain",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=data
             )
@@ -672,7 +634,7 @@ class Hdns_cli(object):
                 print(f"valid records: {content['valid_records']}")
             else:
                 print("Zone file NOT ok!")
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -681,53 +643,40 @@ class Hdns_cli(object):
     # Everything regarding secondary zones
     def show_primary_servers(self, id=False):
         """
-        Shows all primary servers configured
-        :param id: Show ids of primary servers if True
+        Shows all primary servers configured for secondary zones
+        :param id: Show zone ids if True
         """
         try:
             response = requests.get(
-                url=f"https://{self.SYSTEM}/api/v1/primary_servers",
-                headers={"Auth-API-Token": self.API_TOKEN}
+                url=f"https://{self.SYSTEM}/v1/zones",
+                headers=self._auth_header()
             )
 
             status_code = response.status_code
             content = json.loads(response.content)
 
             if status_code == 200:
-                response_zone = requests.get(
-                    url=f"https://{self.SYSTEM}/api/v1/zones",
-                    headers={"Auth-API-Token": self.API_TOKEN}
-                )
-                status_code_zone = response_zone.status_code
-                content_zone = json.loads(response_zone.content)
-
-                if status_code_zone == 200:
-
-                    if id is False:
-                        header = ['Zone', 'IP', 'Port']
-                    else:
-                        header = ['ID', 'Zone', 'IP', 'Port']
-
-                    rows = []
-
-                    for ps in content['primary_servers']:
-                        # get zone name
-                        for z in content_zone['zones']:
-                            if ps['zone_id'] == z['id']:
-                                zone_name = z['name']
-
-                        if id is False:
-                            rows.append(
-                                [zone_name, ps['address'], ps['port']]
-                            )
-                        else:
-                            rows.append(
-                                [ps['id'], zone_name, ps['address'], ps['port']]
-                            )
-
-                    print(tabulate.tabulate(rows, header))
+                if id is False:
+                    header = ['Zone', 'IP', 'Port']
                 else:
-                    print("no records")
+                    header = ['Zone ID', 'Zone', 'IP', 'Port']
+
+                rows = []
+
+                for zone in content['zones']:
+                    is_secondary = zone.get('mode') == 'secondary' or zone.get('is_secondary_dns', False)
+                    if not is_secondary:
+                        continue
+
+                    for ps in zone.get('primary_nameservers', []):
+                        address = ps.get('address', ps.get('ip', ''))
+                        port = ps.get('port', 53)
+                        if id is False:
+                            rows.append([zone['name'], address, port])
+                        else:
+                            rows.append([zone['id'], zone['name'], address, port])
+
+                print(tabulate.tabulate(rows, header))
             else:
                 print("no records")
 
@@ -736,23 +685,22 @@ class Hdns_cli(object):
 
     def create_primary_server(self, zone, address, port=53):
         """
-        Create primary server requires empty zone. This zone is after primary server is created a secondary zone.
+        Configure zone as secondary with a primary server.
         :param zone: Name of the zone, eg. example.org
-        :param address: IPv4 or IPv6 address
+        :param address: IPv4 or IPv6 address of the primary server
         :param port: Port of DNS server
         """
         try:
             zone_id = self._get_zone_id(zone)
-            response = requests.post(
-                url=f"https://{self.SYSTEM}/api/v1/primary_servers",
+            response = requests.put(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
                 headers={
                     "Content-Type": "application/json",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=json.dumps({
-                    "address": address,
-                    "port": port,
-                    "zone_id": zone_id
+                    "mode": "secondary",
+                    "primary_nameservers": [{"address": address, "port": port}]
                 })
             )
 
@@ -762,7 +710,7 @@ class Hdns_cli(object):
             if status_code == 200:
                 print(f"primary_server {address}:{port} for zone {zone} created.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -777,7 +725,6 @@ class Hdns_cli(object):
         :param port_new: New port eg. 53
         """
         try:
-            ps_id = self._get_primary_server_id(zone, address, port)
             zone_id = self._get_zone_id(zone)
 
             if address_new is None:
@@ -786,16 +733,37 @@ class Hdns_cli(object):
             if port_new is None:
                 port_new = port
 
+            # Fetch current zone to get existing primary servers
+            response_zone = requests.get(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
+                headers=self._auth_header(),
+            )
+            zone_data = json.loads(response_zone.content).get('zone', {})
+            primary_servers = zone_data.get('primary_nameservers', [])
+
+            updated = False
+            new_primary_servers = []
+            for ps in primary_servers:
+                ps_address = ps.get('address', ps.get('ip', ''))
+                ps_port = ps.get('port', 53)
+                if ps_address == address and ps_port == port:
+                    new_primary_servers.append({"address": address_new, "port": port_new})
+                    updated = True
+                else:
+                    new_primary_servers.append(ps)
+
+            if not updated:
+                print(f"Primary server {address}:{port} not found in zone {zone}.")
+                return
+
             response = requests.put(
-                url=f"https://{self.SYSTEM}/api/v1/primary_servers/{ps_id}",
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
                 headers={
                     "Content-Type": "application/json",
-                    "Auth-API-Token": self.API_TOKEN,
+                    **self._auth_header(),
                 },
                 data=json.dumps({
-                    "address": address_new,
-                    "port": port_new,
-                    "zone_id": zone_id
+                    "primary_nameservers": new_primary_servers
                 })
             )
 
@@ -805,21 +773,45 @@ class Hdns_cli(object):
             if status_code == 200:
                 print(f"primary server {address}:{port} for zone {zone} updated.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
     def delete_primary_server(self, zone, address, port=53):
-        """ Delete an primary server """
+        """ Delete a primary server from zone """
         try:
-            ps_id = self._get_primary_server_id(zone, address, port)
+            zone_id = self._get_zone_id(zone)
 
-            response = requests.delete(
-                url=f"https://{self.SYSTEM}/api/v1/primary_servers/{ps_id}",
+            # Fetch current zone to get existing primary servers
+            response_zone = requests.get(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
+                headers=self._auth_header(),
+            )
+            zone_data = json.loads(response_zone.content).get('zone', {})
+            primary_servers = zone_data.get('primary_nameservers', [])
+
+            new_primary_servers = [
+                ps for ps in primary_servers
+                if not (ps.get('address', ps.get('ip', '')) == address and ps.get('port', 53) == port)
+            ]
+
+            if len(new_primary_servers) == len(primary_servers):
+                print(f"Primary server {address}:{port} not found in zone {zone}.")
+                return
+
+            new_mode = "secondary" if new_primary_servers else "primary"
+
+            response = requests.put(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}",
                 headers={
-                    "Auth-API-Token": self.API_TOKEN,
+                    "Content-Type": "application/json",
+                    **self._auth_header(),
                 },
+                data=json.dumps({
+                    "mode": new_mode,
+                    "primary_nameservers": new_primary_servers
+                })
             )
 
             status_code = response.status_code
@@ -828,7 +820,7 @@ class Hdns_cli(object):
             if status_code == 200:
                 print("primary server successfully deleted.")
             else:
-                print(content['error']['message'])
+                print(content.get('error', {}).get('message', str(content)))
 
         except requests.exceptions.RequestException as e:
             logger.exception(e)
@@ -843,4 +835,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
