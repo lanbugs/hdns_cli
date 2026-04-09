@@ -454,6 +454,66 @@ class Hdns_cli(object):
         except requests.exceptions.RequestException as e:
             logger.exception(e)
 
+    def replace_ip(self, zone, old_ip, new_ip):
+        """
+        Replace an IP address in all A/AAAA records of a zone.
+        Useful when a server IP changes and needs to be updated everywhere.
+        :param zone: Name of the zone, eg. example.org
+        :param old_ip: IP address to replace, eg. 1.2.3.4
+        :param new_ip: New IP address, eg. 5.6.7.8
+        """
+        try:
+            zone_id = self._get_zone_id(zone)
+
+            response = requests.get(
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                headers=self._auth_header()
+            )
+
+            status_code = response.status_code
+            content = json.loads(response.content)
+
+            if status_code != 200:
+                print(content.get('error', {}).get('message', str(content)))
+                return
+
+            matches = [rr for rr in content['records']
+                       if rr['type'] in ('A', 'AAAA') and rr['value'] == old_ip]
+
+            if not matches:
+                print(f"No A/AAAA records with value {old_ip} found in {zone}.")
+                return
+
+            updated = 0
+            failed = 0
+
+            for rr in matches:
+                r = requests.put(
+                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{rr['id']}",
+                    headers={
+                        "Content-Type": "application/json",
+                        **self._auth_header(),
+                    },
+                    data=json.dumps({
+                        "name": rr['name'],
+                        "type": rr['type'],
+                        "value": new_ip,
+                        "ttl": rr['ttl'],
+                    })
+                )
+                if r.status_code == 200:
+                    print(f"  {rr['name']} {rr['type']}: {old_ip} -> {new_ip}")
+                    updated += 1
+                else:
+                    print(f"  Failed to update {rr['name']} {rr['type']}: {r.content}")
+                    failed += 1
+
+            print(f"Replaced {old_ip} with {new_ip} in {updated} record(s)" +
+                  (f", {failed} failed." if failed else "."))
+
+        except requests.exceptions.RequestException as e:
+            logger.exception(e)
+
     def bulk_create_records(self, yaml_file):
         """
         Creates bulk records for zone
