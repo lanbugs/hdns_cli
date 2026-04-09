@@ -89,25 +89,65 @@ class Hdns_cli(object):
         """ Shows the current used system """
         print(self.SYSTEM)
 
-    def _get_all_records(self, zone_id):
-        """ PRIVATE: Fetch all records of a zone, handling pagination """
-        records = []
+    def _get_all_rrsets(self, zone_id):
+        """ PRIVATE: Fetch all RRsets of a zone, handling pagination """
+        rrsets = []
         page = 1
         while True:
             response = requests.get(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
+                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets",
                 params={"page": page, "per_page": 100},
                 headers=self._auth_header(),
             )
             content = json.loads(response.content)
             if response.status_code != 200:
                 raise RuntimeError(content.get('error', {}).get('message', str(content)))
-            records.extend(content['records'])
+            rrsets.extend(content.get('rrsets', []))
             pagination = content.get('meta', {}).get('pagination', {})
             if page >= pagination.get('last_page', 1):
                 break
             page += 1
+        return rrsets
+
+    def _get_all_records(self, zone_id):
+        """ PRIVATE: Fetch all records by flattening RRsets into individual record objects """
+        records = []
+        for rrset in self._get_all_rrsets(zone_id):
+            for record in rrset.get('records', []):
+                records.append({
+                    'id': f"{rrset['name']}/{rrset['type']}",
+                    'name': rrset['name'],
+                    'type': rrset['type'],
+                    'ttl': rrset.get('ttl', 0),
+                    'value': record['value'],
+                })
         return records
+
+    def _get_rrset(self, zone_id, name, type):
+        """ PRIVATE: Fetch a single RRset by name and type, returns None if not found """
+        response = requests.get(
+            url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets/{name}/{type}",
+            headers=self._auth_header(),
+        )
+        if response.status_code == 200:
+            return json.loads(response.content).get('rrset')
+        return None
+
+    def _put_rrset(self, zone_id, name, type, records, ttl=0):
+        """ PRIVATE: Create or fully replace an RRset """
+        response = requests.put(
+            url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets/{name}/{type}",
+            headers={"Content-Type": "application/json", **self._auth_header()},
+            data=json.dumps({"ttl": ttl, "records": records}),
+        )
+        return response
+
+    def _delete_rrset(self, zone_id, name, type):
+        """ PRIVATE: Delete an entire RRset """
+        return requests.delete(
+            url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/rrsets/{name}/{type}",
+            headers=self._auth_header(),
+        )
 
     def _get_zone_id(self, zone_name):
         """ PRIVATE: Get the zone id to work with names in records add, mod, remove """
@@ -129,27 +169,6 @@ class Hdns_cli(object):
             return False
 
         except requests.exceptions.RequestException as e:
-            logger.exception(e)
-
-    def _get_record_id(self, zone, name, type, value):
-        """ PRIVATE: Get the record id if record is unique """
-        try:
-            zone_id = self._get_zone_id(zone)
-            records = self._get_all_records(zone_id)
-            matches = [rr['id'] for rr in records
-                       if rr['name'] == name and rr['type'] == type and rr['value'] == value]
-            return matches[0] if len(matches) == 1 else False
-        except (requests.exceptions.RequestException, RuntimeError) as e:
-            logger.exception(e)
-
-    def _get_all_record_ids(self, zone, name, type, value):
-        """ PRIVATE: Get the record ids for all identical records """
-        try:
-            zone_id = self._get_zone_id(zone)
-            records = self._get_all_records(zone_id)
-            return [rr['id'] for rr in records
-                    if rr['name'] == name and rr['type'] == type and rr['value'] == value]
-        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     ####################################################################################################################
@@ -342,31 +361,29 @@ class Hdns_cli(object):
         try:
             zone_id = self._get_zone_id(zone)
 
-            if type in VALID_TYPES:
-                response = requests.post(
-                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records",
-                    headers={
-                        "Content-Type": "application/json",
-                        **self._auth_header(),
-                    },
-                    data=json.dumps({
-                        "value": value,
-                        "ttl": ttl,
-                        "type": type,
-                        "name": name,
-                    })
-                )
-
-                status_code = response.status_code
-                content = json.loads(response.content)
-
-                if status_code in (200, 201):
-                    print("record successful created.")
-                else:
-                    print(content.get('error', {}).get('message', str(content)))
-
-            else:
+            if type not in VALID_TYPES:
                 print(f"Given type {type} is not supported.")
+                return
+
+            # Merge with existing RRset values if one already exists
+            rrset = self._get_rrset(zone_id, name, type)
+            if rrset:
+                existing_values = [r['value'] for r in rrset.get('records', [])]
+                if value in existing_values:
+                    print(f"Record {name} {type} {value} already exists.")
+                    return
+                new_records = existing_values + [value]
+                ttl = rrset.get('ttl', ttl)
+            else:
+                new_records = [value]
+
+            response = self._put_rrset(zone_id, name, type,
+                                       [{"value": v} for v in new_records], ttl)
+            if response.status_code == 200:
+                print("record successful created.")
+            else:
+                print(json.loads(response.content).get('error', {}).get('message', str(response.content)))
+
         except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
@@ -384,25 +401,14 @@ class Hdns_cli(object):
             updated = 0
             failed = 0
 
-            for rr in records:
-                r = requests.put(
-                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{rr['id']}",
-                    headers={
-                        "Content-Type": "application/json",
-                        **self._auth_header(),
-                    },
-                    data=json.dumps({
-                        "name": rr['name'],
-                        "type": rr['type'],
-                        "value": rr['value'],
-                        "ttl": ttl,
-                    })
-                )
+            for rrset in self._get_all_rrsets(zone_id):
+                r = self._put_rrset(zone_id, rrset['name'], rrset['type'],
+                                    rrset.get('records', []), ttl)
                 if r.status_code == 200:
                     updated += 1
                 else:
                     failed += 1
-                    print(f"Failed to update {rr['name']} {rr['type']}: {r.content}")
+                    print(f"Failed to update {rrset['name']} {rrset['type']}: {r.content}")
 
             ttl_label = f"{ttl}s" if ttl > 0 else "zone default"
             print(f"TTL set to {ttl_label} for {updated} records in {zone}" +
@@ -421,9 +427,9 @@ class Hdns_cli(object):
         """
         try:
             zone_id = self._get_zone_id(zone)
-            all_records = self._get_all_records(zone_id)
-            matches = [rr for rr in all_records
-                       if rr['type'] in ('A', 'AAAA') and rr['value'] == old_ip]
+            matches = [rrset for rrset in self._get_all_rrsets(zone_id)
+                       if rrset['type'] in ('A', 'AAAA')
+                       and any(r['value'] == old_ip for r in rrset.get('records', []))]
 
             if not matches:
                 print(f"No A/AAAA records with value {old_ip} found in {zone}.")
@@ -432,25 +438,16 @@ class Hdns_cli(object):
             updated = 0
             failed = 0
 
-            for rr in matches:
-                r = requests.put(
-                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{rr['id']}",
-                    headers={
-                        "Content-Type": "application/json",
-                        **self._auth_header(),
-                    },
-                    data=json.dumps({
-                        "name": rr['name'],
-                        "type": rr['type'],
-                        "value": new_ip,
-                        "ttl": rr['ttl'],
-                    })
-                )
+            for rrset in matches:
+                new_records = [{"value": new_ip if r['value'] == old_ip else r['value']}
+                               for r in rrset.get('records', [])]
+                r = self._put_rrset(zone_id, rrset['name'], rrset['type'],
+                                    new_records, rrset.get('ttl', 0))
                 if r.status_code == 200:
-                    print(f"  {rr['name']} {rr['type']}: {old_ip} -> {new_ip}")
+                    print(f"  {rrset['name']} {rrset['type']}: {old_ip} -> {new_ip}")
                     updated += 1
                 else:
-                    print(f"  Failed to update {rr['name']} {rr['type']}: {r.content}")
+                    print(f"  Failed to update {rrset['name']} {rrset['type']}: {r.content}")
                     failed += 1
 
             print(f"Replaced {old_ip} with {new_ip} in {updated} record(s)" +
@@ -474,57 +471,63 @@ class Hdns_cli(object):
         except Exception as e:
             logger.exception(e)
 
-    def update_record(self, zone, name, type, value, name_new=None, value_new=None, record_id=None):
+    def update_record(self, zone, name, type, value, name_new=None, value_new=None):
         """
-        Update exsisting record, record_id required
+        Update existing record by replacing a specific value within its RRset.
         :param zone: Name of the zone, eg. example.org
         :param name: Name of the record, eg. www
         :param type: Type of record eg. A, valid are A, AAAA, NS, MX, CNAME, RP, TXT, SOA, HINFO, SRV, DANE, TLSA, DS, CAA
-        :param value: Value of the record eg. 1.1.1.1
-        :param name_new: New name of the record, eg. www
-        :param value_new: New value of the record eg. 1.1.1.1
-        :param record_id: Record ID if record is not unique. Get record_id with show_records --zone example.org --id True
+        :param value: Current value of the record eg. 1.1.1.1
+        :param name_new: New name of the record (moves to a different RRset)
+        :param value_new: New value of the record eg. 2.2.2.2
         """
         try:
             zone_id = self._get_zone_id(zone)
 
-            if record_id is None:
-                record_id = self._get_record_id(zone, name, type, value)
-
             if name_new is None:
                 name_new = name
-
             if value_new is None:
                 value_new = value
 
-            response = requests.put(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
-                headers={
-                    "Content-Type": "application/json",
-                    **self._auth_header(),
-                },
-                data=json.dumps({
-                    "value": value_new,
-                    "ttl": 0,
-                    "type": type,
-                    "name": name_new,
-                })
-            )
+            rrset = self._get_rrset(zone_id, name, type)
+            if not rrset:
+                print(f"RRset {name} {type} not found in zone {zone}.")
+                return
 
-            status_code = response.status_code
-            content = json.loads(response.content)
+            current_values = [r['value'] for r in rrset.get('records', [])]
+            if value not in current_values:
+                print(f"Value {value} not found in {name} {type}.")
+                return
 
-            if status_code == 200:
+            if name_new == name:
+                # Same RRset: replace value in-place
+                new_records = [{"value": value_new if v == value else v} for v in current_values]
+                response = self._put_rrset(zone_id, name, type, new_records, rrset.get('ttl', 0))
+            else:
+                # Different name: remove from old RRset, add to new RRset
+                remaining = [{"value": v} for v in current_values if v != value]
+                if remaining:
+                    self._put_rrset(zone_id, name, type, remaining, rrset.get('ttl', 0))
+                else:
+                    self._delete_rrset(zone_id, name, type)
+
+                target_rrset = self._get_rrset(zone_id, name_new, type)
+                target_values = [r['value'] for r in target_rrset.get('records', [])] if target_rrset else []
+                target_ttl = target_rrset.get('ttl', rrset.get('ttl', 0)) if target_rrset else rrset.get('ttl', 0)
+                response = self._put_rrset(zone_id, name_new, type,
+                                           [{"value": v} for v in target_values + [value_new]], target_ttl)
+
+            if response.status_code == 200:
                 print("record successful updated.")
             else:
-                print(content.get('error', {}).get('message', str(content)))
+                print(json.loads(response.content).get('error', {}).get('message', str(response.content)))
 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     def delete_record(self, zone, name, type, value):
         """
-        Delete record if record is unique.
+        Delete a specific value from an RRset. If no values remain, the RRset is deleted.
         :param zone: Name of the zone, eg. example.org
         :param name: Name of the record, eg. www
         :param type: Type of record eg. A, valid are A, AAAA, NS, MX, CNAME, RP, TXT, SOA, HINFO, SRV, DANE, TLSA, DS, CAA
@@ -532,72 +535,63 @@ class Hdns_cli(object):
         """
         try:
             zone_id = self._get_zone_id(zone)
-            record_id = self._get_record_id(zone, name, type, value)
+            rrset = self._get_rrset(zone_id, name, type)
+            if not rrset:
+                print(f"RRset {name} {type} not found in zone {zone}.")
+                return
 
-            response = requests.delete(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
-                headers=self._auth_header(),
-            )
+            remaining = [{"value": r['value']} for r in rrset.get('records', []) if r['value'] != value]
 
-            status_code = response.status_code
+            if len(remaining) == len(rrset.get('records', [])):
+                print(f"Value {value} not found in {name} {type}.")
+                return
 
-            if status_code in (200, 204):
+            if remaining:
+                response = self._put_rrset(zone_id, name, type, remaining, rrset.get('ttl', 0))
+            else:
+                response = self._delete_rrset(zone_id, name, type)
+
+            if response.status_code in (200, 204):
                 print("record successfully deleted.")
             else:
                 print(json.loads(response.content))
 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     def delete_records(self, zone, name, type, value):
         """
-        Delete records which are identical
+        Alias for delete_record. In the RRset model duplicates cannot exist.
         :param zone: Name of the zone, eg. example.org
         :param name: Name of the record, eg. www
-        :param type: Type of record eg. A, valid are A, AAAA, NS, MX, CNAME, RP, TXT, SOA, HINFO, SRV, DANE, TLSA, DS, CAA
+        :param type: Type of record eg. A
         :param value: Value of the record eg. 1.1.1.1
         """
-        try:
-            zone_id = self._get_zone_id(zone)
-            record_ids = self._get_all_record_ids(zone, name, type, value)
-            for r in record_ids:
-                response = requests.delete(
-                    url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{r}",
-                    headers=self._auth_header(),
-                )
-
-                status_code = response.status_code
-
-                if status_code in (200, 204):
-                    print("record successfully deleted.")
-                else:
-                    print(json.loads(response.content))
-
-        except requests.exceptions.RequestException as e:
-            logger.exception(e)
+        self.delete_record(zone, name, type, value)
 
     def delete_record_by_id(self, zone, record_id):
         """
-        Delete record with record_id if record is not unique
+        Delete an entire RRset by its ID (format: name/type, eg. www/A).
+        The ID is shown when using show_records --id True.
         :param zone: Name of the zone, eg. example.org
-        :param record_id: Record ID you can get the record id via show_records
+        :param record_id: RRset ID in name/type format, eg. www/A
         """
         try:
             zone_id = self._get_zone_id(zone)
+            # record_id is "name/type", split on last "/"
+            parts = record_id.rsplit('/', 1)
+            if len(parts) != 2:
+                print(f"Invalid record_id format '{record_id}'. Expected name/type, eg. www/A.")
+                return
+            name, rtype = parts
 
-            response = requests.delete(
-                url=f"https://{self.SYSTEM}/v1/zones/{zone_id}/records/{record_id}",
-                headers=self._auth_header(),
-            )
-
-            status_code = response.status_code
-
-            if status_code in (200, 204):
+            response = self._delete_rrset(zone_id, name, rtype)
+            if response.status_code in (200, 204):
                 print("record successfully deleted.")
             else:
                 print(json.loads(response.content))
 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, RuntimeError) as e:
             logger.exception(e)
 
     ####################################################################################################################
